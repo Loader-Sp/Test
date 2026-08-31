@@ -1,3 +1,6 @@
+-- =========================================================
+-- BONK HUB | EGG FARM
+-- =========================================================
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,26 +11,47 @@ local Player = Players.LocalPlayer
 
 local EggState = require(ReplicatedStorage.Client.EggState)
 local Mutations = ReplicatedStorage:WaitForChild("Mutations")
-local CarryRemote =
-	ReplicatedStorage.Packages.Networking["RF/EggWorld/AskFieldEggCarry"]
-
-
+local CarryRemote = ReplicatedStorage.Packages.Networking["RF/EggWorld/AskFieldEggCarry"]
 
 local DROP_OFF_POSITION = Vector3.new(501.24, 70.49, -368.58)
-local ARRIVE_DISTANCE = 2
+local ARRIVE_DISTANCE = 3
+
+local TweenSpeed = 700
+local OriginalWalkSpeed = 16
+
 local Lll = false
+local AutoFarm = false
+local NeedInitialDropOff = false
+
 local lastCarryData = nil
 local ActiveSession = nil
+local FarmThread = nil
+local cache = nil
+local currentBodyVelocity = nil
+local noclipConnection = nil
+local SpawnPosition = nil
 
+local AutoFarmToggle = nil
 
-local LibraryUrl = "https://bonkhub.online/LibraryStandaloneLoader.lua"
+local ZoneDropdown
+local NameDropdown
+local MutationDropdown
+
+local SelectedEggZones = {}
+local SelectedEggNames = {}
+local SelectedMutations = {}
+
+-- =========================================================
+-- UI
+-- =========================================================
 
 local Success, Library = pcall(function()
-	return loadstring(game:HttpGet(LibraryUrl))()
+	return loadstring(game:HttpGet(
+		"https://bonkhub.online/LibraryStandaloneLoader.lua"
+	))()
 end)
 
 if not Success or not Library then
-	warn("Failed to load BONK HUB UI Library")
 	return
 end
 
@@ -36,15 +60,28 @@ local Window = Library:Window({
 	Subtitle = "V1.0.0 | 009.exe is cool",
 	Icon = "rbxassetid://11262159835",
 	ToggleIcon = "rbxassetid://11262159835",
-	Watermark = "BONK HUB ",
+	Watermark = "BONK HUB",
 	WatermarkEnabled = true,
 	ToggleUiKey = Enum.KeyCode.RightControl,
-	Size = { Width = 550, Height = 400 },
+
+	Size = {
+		Width = 550,
+		Height = 400
+	},
+
 	SidebarWidth = 170,
-	Splash = { Subtitle = "Loading ...", MinDuration = 1.2 },
+
+	Splash = {
+		Subtitle = "Loading ...",
+		MinDuration = 1.2
+	},
+
 	ConfigFile = "BonkHub",
 	Theme = "Forest",
-	KeySystem = { Enabled = false },
+
+	KeySystem = {
+		Enabled = false
+	},
 })
 
 Window:Section("Egg Farm")
@@ -52,132 +89,574 @@ Window:Section("Egg Farm")
 local MainTab = Window:Tab("Main", "user")
 local GeneralPage = MainTab:SubTab("General")
 
-local FarmGroup = GeneralPage:Groupbox("Egg Farming", "Left", "7733774602", "true")
-local FilterGroup = GeneralPage:Groupbox("Egg Filters", "Right", "eye")
+local FarmGroup = GeneralPage:Groupbox(
+	"Egg Farming",
+	"Left",
+	"7733774602",
+	"true"
+)
 
+local FilterGroup = GeneralPage:Groupbox(
+	"Egg Filters",
+	"Right",
+	"eye"
+)
 
-local function GetRoot()
-	local Character = Player.Character or Player.CharacterAdded:Wait()
-	return Character:FindFirstChild("HumanoidRootPart")
+-- =========================================================
+-- CHARACTER
+-- =========================================================
+
+local function GetCharacter()
+	local character = Player.Character
+
+	if not character or not character.Parent then
+		return nil
+	end
+
+	return character
 end
 
+local function GetRoot()
+	local character = GetCharacter()
+	if not character then
+		return nil
+	end
+
+	return character:FindFirstChild("HumanoidRootPart")
+end
+
+local function GetHumanoid()
+	local character = GetCharacter()
+	if not character then
+		return nil
+	end
+
+	return character:FindFirstChildOfClass("Humanoid")
+end
+
+-- =========================================================
+-- MOVEMENT CLEANUP
+-- =========================================================
+
+local function CleanupTween()
+	if noclipConnection then
+		noclipConnection:Disconnect()
+		noclipConnection = nil
+	end
+
+	if currentBodyVelocity then
+		pcall(function()
+			currentBodyVelocity:Destroy()
+		end)
+
+		currentBodyVelocity = nil
+	end
+
+	local root = GetRoot()
+
+	if root and root.Parent then
+		root.AssemblyLinearVelocity = Vector3.zero
+	end
+end
+
+local function StopTween()
+	CleanupTween()
+end
+
+-- =========================================================
+-- HUMANOID BYPASS
+-- =========================================================
+
+local function ApplyHumanoidBypass()
+	local character = GetCharacter()
+
+	if not character then
+		return nil
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+	if not humanoid or humanoid.Health <= 0 then
+		return nil
+	end
+
+	if humanoid.Name == "BypassedHumanoid" then
+		return humanoid
+	end
+
+	if not cache or cache.Character ~= character then
+		cache = {
+			Character = character,
+			WalkSpeed = humanoid.WalkSpeed,
+			JumpPower = humanoid.JumpPower,
+			JumpHeight = humanoid.JumpHeight,
+			AutoRotate = humanoid.AutoRotate,
+			PlatformStand = humanoid.PlatformStand,
+		}
+	end
+
+	humanoid.Archivable = true
+
+	local newHumanoid = humanoid:Clone()
+
+	newHumanoid.Name = "BypassedHumanoid"
+	newHumanoid.BreakJointsOnDeath = false
+
+	humanoid:Destroy()
+
+	newHumanoid.Parent = character
+
+	newHumanoid.WalkSpeed =
+		cache.WalkSpeed or OriginalWalkSpeed
+
+	newHumanoid.JumpPower =
+		cache.JumpPower or 50
+
+	newHumanoid.JumpHeight =
+		cache.JumpHeight or 7.2
+
+	newHumanoid.AutoRotate =
+		cache.AutoRotate ~= false
+
+	newHumanoid.PlatformStand = false
+
+	if not newHumanoid:FindFirstChildOfClass("Animator") then
+		Instance.new("Animator", newHumanoid)
+	end
+
+	newHumanoid.Died:Connect(function()
+		if ResetStateOnDeath then
+			ResetStateOnDeath()
+		end
+	end)
+
+	return newHumanoid
+end
+
+-- =========================================================
+-- TWEEN
+-- =========================================================
+
+local function TweenTo(targetPosition, speedOverride)
+	if typeof(targetPosition) ~= "Vector3" then
+		return false
+	end
+
+	local character = GetCharacter()
+
+	if not character then
+		return false
+	end
+
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+	if not root or not humanoid or humanoid.Health <= 0 then
+		return false
+	end
+
+	-- สำคัญ: รับ Humanoid ตัวใหม่หลัง Bypass
+	humanoid = ApplyHumanoidBypass()
+
+	if not humanoid then
+		return false
+	end
+
+	character = GetCharacter()
+
+	if not character then
+		return false
+	end
+
+	root = character:FindFirstChild("HumanoidRootPart")
+
+	humanoid =
+		character:FindFirstChild("BypassedHumanoid")
+		or character:FindFirstChildOfClass("Humanoid")
+
+	if not root
+		or not root.Parent
+		or not humanoid
+		or humanoid.Health <= 0 then
+
+		return false
+	end
+
+	local speed = speedOverride or TweenSpeed
+
+	-- =====================================================
+	-- NOCLIP
+	-- =====================================================
+
+	if not noclipConnection then
+		noclipConnection = RunService.Stepped:Connect(function()
+			local currentCharacter = GetCharacter()
+
+			if not currentCharacter then
+				return
+			end
+
+			for _, part in ipairs(
+				currentCharacter:GetDescendants()
+			) do
+				if part:IsA("BasePart") then
+					part.CanCollide = false
+				end
+			end
+		end)
+	end
+
+	-- =====================================================
+	-- BODY VELOCITY
+	-- =====================================================
+
+	if currentBodyVelocity then
+		if currentBodyVelocity.Parent ~= root then
+			pcall(function()
+				currentBodyVelocity:Destroy()
+			end)
+
+			currentBodyVelocity = nil
+		end
+	end
+
+	if not currentBodyVelocity then
+		local bv = Instance.new("BodyVelocity")
+
+		bv.Name = "BonkMovementVelocity"
+		bv.MaxForce = Vector3.new(
+			math.huge,
+			math.huge,
+			math.huge
+		)
+
+		bv.P = 12500
+		bv.Velocity = Vector3.zero
+		bv.Parent = root
+
+		currentBodyVelocity = bv
+	end
+
+	-- =====================================================
+	-- TWEEN LOOP
+	-- =====================================================
+
+	local reached = false
+	local stopped = false
+	local connection
+
+	connection = RunService.Heartbeat:Connect(function()
+		local currentCharacter = GetCharacter()
+
+		if not currentCharacter then
+			stopped = true
+
+			if connection then
+				connection:Disconnect()
+				connection = nil
+			end
+
+			return
+		end
+
+		local currentRoot =
+			currentCharacter:FindFirstChild("HumanoidRootPart")
+
+		local currentHumanoid =
+			currentCharacter:FindFirstChild("BypassedHumanoid")
+			or currentCharacter:FindFirstChildOfClass("Humanoid")
+
+		if not currentRoot
+			or not currentRoot.Parent
+			or not currentHumanoid
+			or currentHumanoid.Health <= 0 then
+
+			stopped = true
+
+			if connection then
+				connection:Disconnect()
+				connection = nil
+			end
+
+			return
+		end
+
+		-- Character เปลี่ยน = หยุด Tween เก่า
+		if currentRoot ~= root then
+			stopped = true
+
+			if connection then
+				connection:Disconnect()
+				connection = nil
+			end
+
+			return
+		end
+
+		local currentPos = currentRoot.Position
+		local offset = targetPosition - currentPos
+		local distance = offset.Magnitude
+
+		if distance <= ARRIVE_DISTANCE then
+			if currentBodyVelocity
+				and currentBodyVelocity.Parent == currentRoot then
+
+				currentBodyVelocity.Velocity = Vector3.zero
+			end
+
+			reached = true
+
+			if connection then
+				connection:Disconnect()
+				connection = nil
+			end
+
+			return
+		end
+
+		if distance > 0.05 then
+			currentRoot.CFrame = CFrame.new(
+				currentPos,
+				Vector3.new(
+					targetPosition.X,
+					currentPos.Y,
+					targetPosition.Z
+				)
+			)
+		end
+
+		local calculatedSpeed = math.min(
+			speed,
+			math.max(30, distance * 8)
+		)
+
+		if currentBodyVelocity
+			and currentBodyVelocity.Parent == currentRoot then
+
+			currentBodyVelocity.Velocity =
+				offset.Unit * calculatedSpeed
+		end
+	end)
+
+	while not reached
+		and not stopped
+		and AutoFarm do
+
+		local currentCharacter = GetCharacter()
+
+		if not currentCharacter then
+			break
+		end
+
+		local currentHumanoid =
+			currentCharacter:FindFirstChild("BypassedHumanoid")
+			or currentCharacter:FindFirstChildOfClass("Humanoid")
+
+		if not currentHumanoid
+			or currentHumanoid.Health <= 0 then
+			break
+		end
+
+		task.wait()
+	end
+
+	if connection then
+		connection:Disconnect()
+		connection = nil
+	end
+
+	if currentBodyVelocity
+		and currentBodyVelocity.Parent == root then
+
+		currentBodyVelocity.Velocity = Vector3.zero
+	end
+
+	return reached
+end
+
+-- =========================================================
+-- EGG UTILITIES
+-- =========================================================
+
 local function EggRecordExists(uid)
-	if not uid then return false end
+	if not uid then
+		return false
+	end
+
 	return EggState.ReadFieldEgg(uid) ~= nil
 end
 
 local function IsCarryingUid(uid)
-	if not uid then return false end
-	return lastCarryData ~= nil
+	return uid
+		and lastCarryData
 		and tostring(lastCarryData.Uid) == tostring(uid)
 end
 
 local function IsOwnedByMe(uid)
-	if not uid then return false end
-	return EggState.ReadOwnedEgg(Player.UserId, uid) ~= nil
+	if not uid then
+		return false
+	end
+
+	return EggState.ReadOwnedEgg(
+		Player.UserId,
+		uid
+	) ~= nil
 end
 
 local function GetEggByUid(uid)
-	if not uid then return nil end
+	if not uid then
+		return nil
+	end
 
-	local egg = Workspace:FindFirstChild(tostring(uid), true)
-	if not egg then return nil end
+	local egg = Workspace:FindFirstChild(
+		tostring(uid),
+		true
+	)
+
+	if not egg then
+		return nil
+	end
 
 	if egg:IsA("BasePart") then
 		return egg
-	elseif egg:IsA("Model") then
-		return egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart", true)
+	end
+
+	if egg:IsA("Model") then
+		return egg.PrimaryPart
+			or egg:FindFirstChildWhichIsA(
+				"BasePart",
+				true
+			)
 	end
 
 	return nil
 end
 
-
-local SelectedEggZones = {}
-local SelectedEggNames = {}
-local SelectedMutations = {}
+-- =========================================================
+-- FILTER
+-- =========================================================
 
 local function IsSelected(selection, value)
-	if next(selection) == nil then return true end
+	if next(selection) == nil then
+		return true
+	end
+
 	return selection[tostring(value)] == true
 end
 
 local function GetEggMutation(record)
-	if not record then return "Unknown" end
+	if not record then
+		return "Unknown"
+	end
 
-	local mutation = record.Mutation
+	local mutation =
+		record.Mutation
 		or record.MutationName
 		or record.MutationId
 		or record.MutationType
 
-	if mutation ~= nil then return tostring(mutation) end
+	if mutation ~= nil then
+		return tostring(mutation)
+	end
 
 	return "None"
 end
 
 local function GetMutationNames()
-	local mutations = {}
+	local result = {}
 	local seen = {}
 
-	for _, folder in ipairs(Mutations:GetChildren()) do
-		if folder:IsA("Folder") and not seen[folder.Name] then
+	for _, folder in ipairs(
+		Mutations:GetChildren()
+	) do
+		if folder:IsA("Folder")
+			and not seen[folder.Name] then
+
 			seen[folder.Name] = true
-			table.insert(mutations, folder.Name)
+			table.insert(result, folder.Name)
 		end
 	end
 
-	table.sort(mutations, function(a, b) return tostring(a) < tostring(b) end)
-	return mutations
+	table.sort(result)
+
+	return result
 end
 
 local function GetEggFilterData()
-	local zones, names = {}, {}
-	local zoneSet, nameSet = {}, {}
+	local zones = {}
+	local names = {}
 
-	local fieldData = EggState.ReadFieldEggs()
+	local zoneSet = {}
+	local nameSet = {}
 
-	if not fieldData or not fieldData.Records then
+	local fieldData =
+		EggState.ReadFieldEggs()
+
+	if not fieldData
+		or not fieldData.Records then
+
 		return zones, names
 	end
 
 	for _, record in ipairs(fieldData.Records) do
-		local zone = tostring(record.AreaId or "Unknown")
-		local name = tostring(record.AssetCategory or "Unknown")
+		local zone =
+			tostring(record.AreaId or "Unknown")
+
+		local name =
+			tostring(record.AssetCategory or "Unknown")
 
 		if not zoneSet[zone] then
 			zoneSet[zone] = true
 			table.insert(zones, zone)
 		end
+
 		if not nameSet[name] then
 			nameSet[name] = true
 			table.insert(names, name)
 		end
 	end
 
-	table.sort(zones, function(a, b) return tostring(a) < tostring(b) end)
-	table.sort(names, function(a, b) return tostring(a) < tostring(b) end)
+	table.sort(zones)
+	table.sort(names)
 
 	return zones, names
 end
 
 local function GetFilteredEggs()
-	local fieldData = EggState.ReadFieldEggs()
+	local fieldData =
+		EggState.ReadFieldEggs()
 
-	if not fieldData or not fieldData.Records then
+	if not fieldData
+		or not fieldData.Records then
+
 		return {}
 	end
 
 	local result = {}
 
 	for _, record in ipairs(fieldData.Records) do
-		local zone = tostring(record.AreaId or "Unknown")
-		local name = tostring(record.AssetCategory or "Unknown")
-		local mutation = GetEggMutation(record)
+		local zone =
+			tostring(record.AreaId or "Unknown")
 
-		if IsSelected(SelectedEggZones, zone)
-			and IsSelected(SelectedEggNames, name)
-			and IsSelected(SelectedMutations, mutation)
-		then
+		local name =
+			tostring(record.AssetCategory or "Unknown")
+
+		local mutation =
+			GetEggMutation(record)
+
+		if IsSelected(
+			SelectedEggZones,
+			zone
+		)
+		and IsSelected(
+			SelectedEggNames,
+			name
+		)
+		and IsSelected(
+			SelectedMutations,
+			mutation
+		) then
+
 			table.insert(result, record)
 		end
 	end
@@ -186,33 +665,31 @@ local function GetFilteredEggs()
 end
 
 local function GetNearestFilteredEgg()
-	local Root = GetRoot()
-	if not Root then return nil, nil end
+	local root = GetRoot()
 
-	local records = GetFilteredEggs()
+	if not root then
+		return nil, nil
+	end
 
-	local nearestPart, nearestUid = nil, nil
+	local records =
+		GetFilteredEggs()
+
+	local nearestPart = nil
+	local nearestUid = nil
 	local nearestDistance = math.huge
 
 	for _, record in ipairs(records) do
 		local uid = tostring(record.Uid)
-		local egg = Workspace:FindFirstChild(uid, true)
+		local egg = GetEggByUid(uid)
 
 		if egg then
-			local part = nil
-			if egg:IsA("BasePart") then
-				part = egg
-			elseif egg:IsA("Model") then
-				part = egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart", true)
-			end
+			local distance =
+				(root.Position - egg.Position).Magnitude
 
-			if part then
-				local distance = (Root.Position - part.Position).Magnitude
-				if distance < nearestDistance then
-					nearestDistance = distance
-					nearestPart = part
-					nearestUid = uid
-				end
+			if distance < nearestDistance then
+				nearestDistance = distance
+				nearestPart = egg
+				nearestUid = uid
 			end
 		end
 	end
@@ -220,41 +697,74 @@ local function GetNearestFilteredEgg()
 	return nearestPart, nearestUid
 end
 
+-- =========================================================
+-- FILTER UI
+-- =========================================================
 
 local zones, names = GetEggFilterData()
 local mutationNames = GetMutationNames()
 
-local ZoneDropdown = FilterGroup:AddDropdown({
-	Title = "Zone", Values = zones, Default = {}, Multi = true, Flag = "EggZones",
-	Callback = function(Value) SelectedEggZones = Value or {} end,
+ZoneDropdown = FilterGroup:AddDropdown({
+	Title = "Zone",
+	Values = zones,
+	Default = {},
+	Multi = true,
+	Flag = "EggZones",
+
+	Callback = function(Value)
+		SelectedEggZones = Value or {}
+	end,
 })
 
-local NameDropdown = FilterGroup:AddDropdown({
-	Title = "Egg Name", Values = names, Default = {}, Multi = true, Flag = "EggNames",
-	Callback = function(Value) SelectedEggNames = Value or {} end,
+NameDropdown = FilterGroup:AddDropdown({
+	Title = "Egg Name",
+	Values = names,
+	Default = {},
+	Multi = true,
+	Flag = "EggNames",
+
+	Callback = function(Value)
+		SelectedEggNames = Value or {}
+	end,
 })
 
-local MutationDropdown = FilterGroup:AddDropdown({
-	Title = "Mutation", Values = mutationNames, Default = {}, Multi = true, Flag = "EggMutations",
-	Callback = function(Value) SelectedMutations = Value or {} end,
+MutationDropdown = FilterGroup:AddDropdown({
+	Title = "Mutation",
+	Values = mutationNames,
+	Default = {},
+	Multi = true,
+	Flag = "EggMutations",
+
+	Callback = function(Value)
+		SelectedMutations = Value or {}
+	end,
 })
 
 FilterGroup:AddButton({
 	Title = "Refresh Egg List",
+
 	Callback = function()
-		local newZones, newNames = GetEggFilterData()
-		local newMutations = GetMutationNames()
+		local newZones, newNames =
+			GetEggFilterData()
+
+		local newMutations =
+			GetMutationNames()
 
 		ZoneDropdown.Refresh(newZones)
 		NameDropdown.Refresh(newNames)
 		MutationDropdown.Refresh(newMutations)
 
-		Library:Notify("Egg Filter", "Egg list refreshed!", 2)
+		Library:Notify(
+			"Egg Filter",
+			"Egg list refreshed!",
+			2
+		)
 	end,
 })
 
 FilterGroup:AddButton({
 	Title = "Clear All Filters",
+
 	Callback = function()
 		SelectedEggZones = {}
 		SelectedEggNames = {}
@@ -264,9 +774,17 @@ FilterGroup:AddButton({
 		NameDropdown.Set({})
 		MutationDropdown.Set({})
 
-		Library:Notify("Egg Filter", "All filters cleared", 2)
+		Library:Notify(
+			"Egg Filter",
+			"All filters cleared",
+			2
+		)
 	end,
 })
+
+-- =========================================================
+-- STATUS
+-- =========================================================
 
 local StatusParagraph = FarmGroup:AddParagraph({
 	Title = "Egg Filter Status",
@@ -276,56 +794,57 @@ local StatusParagraph = FarmGroup:AddParagraph({
 
 task.spawn(function()
 	while task.wait(0.5) do
-		local filtered = GetFilteredEggs()
+		local filtered =
+			GetFilteredEggs()
+
 		if StatusParagraph then
+			local statusText = "Farming: Idle"
+
+			if Lll then
+				statusText =
+					"Farming: Stealing Egg"
+
+			elseif AutoFarm
+				and NeedInitialDropOff then
+
+				statusText =
+					"Farming: Moving to Drop-off..."
+
+			elseif AutoFarm then
+				statusText =
+					"Farming: Running"
+			end
+
 			StatusParagraph:SetDesc(
-				"Matching Eggs: " .. tostring(#filtered)
-				.. "\nFarming: " .. (Lll and "Running" or "Idle")
+				"Matching Eggs: "
+				.. tostring(#filtered)
+				.. "\n"
+				.. statusText
 			)
 		end
 	end
 end)
 
 -- =========================================================
--- RUN EGG SESSION
+-- EGG SESSION
 -- =========================================================
 
 local function RunEggSession(uid)
-
-	if not uid then
+	if not uid or Lll then
 		return false
 	end
 
-	local character =
-		Player.Character
-		or Player.CharacterAdded:Wait()
+	local root = GetRoot()
+	local humanoid = GetHumanoid()
 
-	local rootPart =
-		character:WaitForChild("HumanoidRootPart")
+	if not root
+		or not humanoid
+		or humanoid.Health <= 0 then
 
-	local humanoid =
-		character:WaitForChild("Humanoid")
-
-	local maxSpeed = humanoid.WalkSpeed
+		return false
+	end
 
 	Lll = true
-
-	for _, part in ipairs(character:GetDescendants()) do
-		if part:IsA("BasePart") then
-			part.CanCollide = false
-		end
-	end
-
-	local oldVelocity = rootPart:FindFirstChild("SmoothBodyVelocity")
-	if oldVelocity then
-		oldVelocity:Destroy()
-	end
-
-	local bodyVelocity = Instance.new("BodyVelocity")
-	bodyVelocity.Name = "SmoothBodyVelocity"
-	bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-	bodyVelocity.P = 10000
-	bodyVelocity.Parent = rootPart
 
 	local sessionActive = true
 	local success = false
@@ -333,30 +852,25 @@ local function RunEggSession(uid)
 	ActiveSession = {
 		Stop = function()
 			sessionActive = false
+			Lll = false
+			StopTween()
 		end,
 	}
 
+	-- =====================================================
+	-- STEAL LOOP
+	-- =====================================================
+
 	task.spawn(function()
-
 		while sessionActive do
-
 			if IsOwnedByMe(uid) then
-
-				print("[RunEggSession] เป็นเจ้าของไข่แล้ว:", uid)
-
 				success = true
 				sessionActive = false
-
 				break
 			end
 
 			if not EggRecordExists(uid) then
-
-				print("[RunEggSession] ไข่หายไป:", uid)
-
-				success = false
 				sessionActive = false
-
 				break
 			end
 
@@ -367,195 +881,290 @@ local function RunEggSession(uid)
 				})
 			end)
 
-			task.wait()
+			task.wait(0.2)
 		end
 	end)
 
-	local moveConn
+	-- =====================================================
+	-- MOVEMENT LOOP
+	-- =====================================================
 
-	moveConn = RunService.Heartbeat:Connect(function(dt)
+	task.spawn(function()
+		while sessionActive do
+			local targetPos
 
-		if not sessionActive then
-			moveConn:Disconnect()
-			return
-		end
-
-		if not rootPart.Parent then
-			sessionActive = false
-			moveConn:Disconnect()
-			return
-		end
-
-		local targetPosition
-
-		if IsCarryingUid(uid) then
-			targetPosition = DROP_OFF_POSITION
-		else
-			local eggPart = GetEggByUid(uid)
-			if eggPart then
-				targetPosition = eggPart.Position + Vector3.new(0, 3, 0)
+			if IsCarryingUid(uid) then
+				targetPos =
+					DROP_OFF_POSITION
 			else
-				bodyVelocity.Velocity = Vector3.zero
-				return
+				local egg =
+					GetEggByUid(uid)
+
+				if egg then
+					targetPos =
+						egg.Position
+						+ Vector3.new(0, 2, 0)
+				end
 			end
+
+			if targetPos then
+				TweenTo(targetPos)
+			end
+
+			task.wait(0.1)
 		end
-
-		local offset = targetPosition - rootPart.Position
-		local distance = offset.Magnitude
-
-		if distance <= ARRIVE_DISTANCE then
-			bodyVelocity.Velocity = Vector3.zero
-			return
-		end
-
-		local maxTravelThisFrame =
-			distance / math.max(dt, 1 / 240)
-
-		local speed = math.min(maxSpeed, maxTravelThisFrame)
-
-		if distance < maxSpeed then
-			speed = math.min(speed, math.max(distance * 4, 4))
-		end
-
-		bodyVelocity.Velocity = offset.Unit * speed
 	end)
 
 	while sessionActive do
 		task.wait()
 	end
 
-	if moveConn then
-		moveConn:Disconnect()
-	end
-
-	if bodyVelocity then
-		bodyVelocity.Velocity = Vector3.zero
-		bodyVelocity:Destroy()
-	end
-
 	Lll = false
 
-	if character then
-		for _, part in ipairs(character:GetDescendants()) do
-			if part:IsA("BasePart") then
-				part.CanCollide = true
-			end
-		end
-	end
+	StopTween()
 
 	ActiveSession = nil
 
 	return success
 end
+
+-- =========================================================
+-- FARM ONE EGG
+-- =========================================================
+
 local function FarmOneEgg()
-
 	if Lll then
-		print("[FarmOneEgg] Already farming")
 		return
 	end
 
-	local Egg, EggUid = GetNearestFilteredEgg()
+	-- หลังเปิด / หลัง Respawn
+	if NeedInitialDropOff then
+		local arrived =
+			TweenTo(DROP_OFF_POSITION)
 
-	if not Egg or not EggUid then
-		print("[FarmOneEgg] ไม่พบไข่ที่ตรง Filter")
-		task.wait(1)
+		if arrived then
+			NeedInitialDropOff = false
+
+			StopTween()
+
+			task.wait(0.3)
+		else
+			return
+		end
+	end
+
+	local egg, uid =
+		GetNearestFilteredEgg()
+
+	if not egg or not uid then
+		task.wait(0.5)
 		return
 	end
 
-	print("[FarmOneEgg] เลือกไข่:", EggUid)
-
-	local success = RunEggSession(EggUid)
-
-	if success then
-		print("[FarmOneEgg] ได้ไข่แล้ว ->", EggUid)
-	else
-		print("[FarmOneEgg] พลาดไข่ ->", EggUid)
-	end
+	RunEggSession(uid)
 end
 
 -- =========================================================
--- CARRY STATE
+-- FARM LOOP
+-- =========================================================
+
+local function StartFarmLoop()
+	if FarmThread then
+		return
+	end
+
+	FarmThread = task.spawn(function()
+		while AutoFarm do
+			local character =
+				GetCharacter()
+
+			local humanoid =
+				GetHumanoid()
+
+			if character
+				and humanoid
+				and humanoid.Health > 0 then
+
+				if not Lll then
+					FarmOneEgg()
+				else
+					task.wait()
+				end
+			else
+				task.wait(1)
+			end
+		end
+
+		FarmThread = nil
+	end)
+end
+
+-- =========================================================
+-- CARRY
 -- =========================================================
 
 EggState.CarryChanged:Connect(function(data)
-
 	lastCarryData = data
-
-	if data == nil then
-		print("[CarryChanged] ไม่ได้ถือไข่แล้ว")
-	else
-		print("[CarryChanged] กำลังถือไข่ Uid:", data.Uid)
-	end
 end)
 
 -- =========================================================
--- AUTO FARM TOGGLE
+-- SPEED
 -- =========================================================
 
-local AutoFarm = false
-local FarmThread = nil
+FarmGroup:AddSlider({
+	Title = "Tween Speed",
+	Min = 100,
+	Max = 2000,
+	Default = 700,
+	Rounding = 0,
+	Suffix = " studs/s",
+	Flag = "TweenSpeedSlider",
 
-FarmGroup:AddToggle({
-	Title = "Auto Steal egg ",
+	Callback = function(Value)
+		TweenSpeed = Value
+	end,
+})
+
+-- =========================================================
+-- AUTO FARM
+-- =========================================================
+
+AutoFarmToggle = FarmGroup:AddToggle({
+	Title = "Auto Steal egg",
 	Default = false,
 	Flag = "AutoStealegg",
 
 	Callback = function(Value)
-
 		AutoFarm = Value
 
 		if Value then
+			-- เปิดใหม่ต้อง Drop-off ก่อน
+			NeedInitialDropOff = true
 
-			if FarmThread then
-				return
-			end
-
-			FarmThread = task.spawn(function()
-
-				while AutoFarm do
-
-					if not Lll then
-
-						local egg = GetNearestFilteredEgg()
-
-						if egg then
-							FarmOneEgg()
-						else
-							task.wait(1)
-						end
-
-					else
-						task.wait()
-					end
-				end
-
-				FarmThread = nil
-			end)
+			StartFarmLoop()
 
 		else
 			AutoFarm = false
+			NeedInitialDropOff = false
+
+			if ActiveSession then
+				ActiveSession.Stop()
+				ActiveSession = nil
+			end
+
+			Lll = false
+
+			StopTween()
 		end
 	end,
 })
 
-local function OnCharacterDied()
+-- =========================================================
+-- RESET ON DEATH
+-- =========================================================
 
+function ResetStateOnDeath()
 	if ActiveSession then
 		ActiveSession.Stop()
+		ActiveSession = nil
 	end
 
 	Lll = false
-end
-local function HookDeath(character)
+	lastCarryData = nil
+	cache = nil
 
-	local humanoid = character:WaitForChild("Humanoid")
-	humanoid.Died:Connect(OnCharacterDied)
+	-- ล้าง Movement ของ Character เก่า
+	StopTween()
+
+	-- ถ้า Auto Farm ยังเปิด
+	-- Character ใหม่ต้องกลับ Drop-off ก่อน
+	if AutoFarm then
+		NeedInitialDropOff = true
+	end
 end
 
-Player.CharacterAdded:Connect(function(newCharacter)
-	OnCharacterDied()
-	HookDeath(newCharacter)
+-- =========================================================
+-- CHARACTER SETUP
+-- =========================================================
+
+local function SetupCharacter(character)
+	if not character then
+		return
+	end
+
+	-- ล้าง reference ของ Character เก่า
+	StopTween()
+
+		cache = nil
+	lastCarryData = nil
+	Lll = false
+
+	local humanoid = character:WaitForChild("Humanoid", 15)
+	local root = character:WaitForChild("HumanoidRootPart", 15)
+
+	if not character.Parent then
+		return
+	end
+
+	if root then
+		SpawnPosition = root.Position
+	end
+
+	if humanoid then
+		humanoid.Died:Connect(function()
+			ResetStateOnDeath()
+		end)
+	end
+
+	if AutoFarm then
+		NeedInitialDropOff = true
+
+		task.delay(1.5, function()
+			if not AutoFarm then
+				return
+			end
+
+			if Player.Character ~= character then
+				return
+			end
+
+			local currentHumanoid =
+				character:FindFirstChildOfClass("Humanoid")
+
+			local currentRoot =
+				character:FindFirstChild("HumanoidRootPart")
+
+			if not currentHumanoid
+				or currentHumanoid.Health <= 0
+				or not currentRoot then
+				return
+			end
+
+			StartFarmLoop()
+		end)
+	end
+end
+
+-- =========================================================
+-- CHARACTER ADDED
+-- =========================================================
+
+Player.CharacterAdded:Connect(function(character)
+	ResetStateOnDeath()
+
+	if AutoFarm then
+		NeedInitialDropOff = true
+	end
+
+	SetupCharacter(character)
 end)
+
+-- =========================================================
+-- CURRENT CHARACTER
+-- =========================================================
+
 if Player.Character then
-	HookDeath(Player.Character)
+	task.spawn(function()
+		SetupCharacter(Player.Character)
+	end)
 end
