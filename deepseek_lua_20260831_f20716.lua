@@ -533,7 +533,7 @@ local function GetEggByUid(uid)
 end
 
 -- =========================================================
--- FILTER
+-- FILTER 
 -- =========================================================
 
 local function IsSelected(selection, value)
@@ -717,7 +717,7 @@ ZoneDropdown = FilterGroup:AddDropdown({
 })
 
 NameDropdown = FilterGroup:AddDropdown({
-	Title = "Egg Name",
+	Title = " Name",
 	Values = names,
 	Default = {},
 	Multi = true,
@@ -788,7 +788,7 @@ FilterGroup:AddButton({
 
 local StatusParagraph = FarmGroup:AddParagraph({
 	Title = "Egg Filter Status",
-	Content = "Matching Eggs: 0\nFarming: Idle",
+	Content = "quantity Eggs: 0\nFarming: none",
 	TextWrapped = true,
 })
 
@@ -798,7 +798,7 @@ task.spawn(function()
 			GetFilteredEggs()
 
 		if StatusParagraph then
-			local statusText = "Farming: Idle"
+			local statusText = "Farming: none"
 
 			if Lll then
 				statusText =
@@ -808,7 +808,7 @@ task.spawn(function()
 				and NeedInitialDropOff then
 
 				statusText =
-					"Farming: Moving to Drop-off..."
+					"Farming: ..."
 
 			elseif AutoFarm then
 				statusText =
@@ -816,7 +816,7 @@ task.spawn(function()
 			end
 
 			StatusParagraph:SetDesc(
-				"Matching Eggs: "
+				"quantity Eggs: "
 				.. tostring(#filtered)
 				.. "\n"
 				.. statusText
@@ -1126,7 +1126,6 @@ AutoFarmToggle = FarmGroup:AddToggle({
 	Title = "Auto Steal egg",
 	Default = false,
 	Flag = "AutoStealegg",
-
 	Callback = function(Value)
 		AutoFarm = Value
 
