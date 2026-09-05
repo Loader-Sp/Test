@@ -2,6 +2,8 @@
 -- BONK HUB | EGG FARM
 -- =========================================================
 
+--// Services
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -308,7 +310,7 @@ local function SetupMobileJump()
 	local btn = frame:FindFirstChild("JumpButton")
 	if not btn then return end
 	
-	btn:GetPropertyChangedSignal("GuiState"):Connect(function()
+	btn:GetChangedSignal("GuiState"):Connect(function()
 		if btn.GuiState == Enum.GuiState.Press then
 			JumpHeld = true
 			if not Jumping then
