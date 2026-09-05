@@ -1,12 +1,11 @@
---========
--- BONK HUB | EGG FARM
--- =========================================================
+
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetServiceRunService")
 local UIS = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 
 local Player = Players.LocalPlayer
 
@@ -39,16 +38,12 @@ local SelectedEggZones = {}
 local SelectedEggNames = {}
 local SelectedMutations = {}
 
--- =========================================================
--- NEW HUMANOID SYSTEM
--- =========================================================
 
 local CurrentHumanoid = nil
 
 local JumpHeld = false
 local Jumping = false
 
---// รีเพลส Humanoid
 local function ReplaceHumanoid(character)
 	local old = character:WaitForChild("Humanoid", 5)
 	if not old then return end
@@ -60,8 +55,6 @@ local function ReplaceHumanoid(character)
 	}) do
 		saved[prop] old[prop]
 	end
-
-	--// Animation
 	local animate = character:FindFirstChild("Animate")
 
 	if animate and animate:IsA("LocalScript") then
@@ -83,8 +76,6 @@ local function ReplaceHumanoid(character)
 	old.Archivable = true
 
 	local new = old:Clone()
-
-	--// ไม่เอา Animator เดิมติดไป
 	for _, obj in ipairs(new:GetChildren()) do
 		if obj:IsA("Animator") then
 			obj:Destroy()
@@ -92,7 +83,6 @@ local function ReplaceHumanoid(character)
 	end
 
 	old:Destroy()
-
 	new.Parent = character
 	new.BreakJointsOnDeath = false
 
@@ -101,8 +91,6 @@ local function ReplaceHumanoid(character)
 	if rootPart then
 		character.PrimaryPart = rootPart
 	end
-
-	--// คืนค่า Properties เหมือนเดิม
 	for _, prop in ipairs({
 		"WalkSpeed", "JumpPower", "JumpHeight", "UseJumpPower",
 		"AutoRotate", "PlatformStand", "HipHeight", "MaxHealth"
@@ -122,28 +110,24 @@ local function ReplaceHumanoid(character)
 	if camera then
 		camera.CameraSubject = new
 	end
-
-	--// Animator ใหม่
  newAnimator = Instance.new("Animator")
 	newAnimator = new
 
-	--// เปิด State ที่จำเป็น
+	
 	new:SetStateEnabled(Enum.HumanoidType.Jumping, true)
 	new:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
 	new:SetStateEnabled(Enum.HumanStateType.Running, true)
 	new:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
 	new:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
 
-	--// ปิด State ที่ทำให้ติด
+
 	new:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false)
 	new:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
 	new:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
 
-	--// เปิด Animate
 	if animate and animate:IsA("LocalScript") then
 		task.wait()
 		animate.Disabled = false
-
 		task.defer(function()
 			if animate.Parent then
 			animate.Disabled = true
@@ -158,8 +142,6 @@ local function ReplaceHumanoid(character)
 	RunService.Heartbeat:Wait()
 
 	new:ChangeState(Enum.HumanoidStateType.Running)
-
-	--// เชื่อม Death กับระบบฟาร์ม
 	new.Died:Connect(function()
 		if ResetStateOnDeath then
 			ResetStateOnDeath()
@@ -168,23 +150,15 @@ local function ReplaceHumanoid(character)
 
 	return new
 end
-
---// ปลดล็อคตัวละคร
 local function UnlockCharacter(humanoid, root)
 	if not humanoid or not root then return end
-
-	--// Seat / VehicleSeat
 	if humanoid.SeatPart then
 		humanoid.Sit = false
 		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 	end
-
-	--// Anchor
 	if root.Anchored then
 		root.Anchored = false
 	end
-
-	--// Constraints
 	for _, obj in ipairs(root:GetChildren()) do
 		if obj:IsA("BodyPosition")
 			or obj:IsA("BodyGyro")
@@ -198,8 +172,6 @@ local function UnlockCharacter(humanoid, root)
 			obj:Destroy()
 		end
 	end
-
-	--// Weld / Motor ที่ติด Seat
 	for _, obj in ipairs(root:GetChildren()) do
 		if obj:IsA("Weld") or obj:IsA("Motor") then
 			if obj.Part1 and (
@@ -211,23 +183,17 @@ local function UnlockCharacter(humanoid, root)
 			end
 		end
 	end
-
-	--// ถ้ายัติด Seat
 	if humanoid.SeatPart then
 		root:BreakJoints()
 	end
 end
 
---// กระโดดหนึ่งรอบ
 local function DoJump()
 	if Jumping then return end
-
 	local humanoid = CurrentHumanoid
-
 	if not humanoid
 		or not humanoid.Parent
 		or humanoid.Health <= 0 then
-
 		return
 	end
 
@@ -235,23 +201,16 @@ local function DoJump()
 
 	local root = humanoid.RootPart
 		or character:FindFirstChild("HumanoidRootPart")
-
 	if not root then return end
-
 	UnlockCharacter(humanoid, root)
 
-	--// ถ้ายัง Anchor
 	if root.Anchored then
 		root.CFrame += Vector3.new(0, 0.5, 0)
-
 		RunService.Heartbeat:Wait()
-
 		root.Anchored = false
 	end
 
-	--// คำนวณแรงกระโดด
 	local power
-
 	if humanoid.UseJumpPower then
 		power = humanoid.JumpPower > 0
 			and humanoid.JumpPower
@@ -265,10 +224,7 @@ local function DoJump()
 			2 * Workspace.Gravity * height
 		)
 	end
-
-	--// เก็บความเร็วเดิม X/Z
 	local velocity = root.AssemblyLinearVelocity
-
 	root.AssemblyLinearVelocity = Vector3.new(
 		velocity.X,
 		power,
@@ -281,8 +237,6 @@ local function DoJump()
 
 	Jumping = true
 end
-
---// ตรวจว่าการกระโดดจบรอบหรือยัง
 RunService.Heartbeat:Connect(function()
 	local humanoid = CurrentHumanoid
 
@@ -314,8 +268,6 @@ RunService.Heartbeat:Connect(function()
 		end
 	end
 end)
-
---// PC / Controller
 UIS.JumpRequest:Connect(function()
 	JumpHeld = true
 
@@ -324,55 +276,38 @@ UIS.JumpRequest:Connect(function()
 	end
 end)
 
---// ปล่อย Space
 UIS.InputEnded:Connect(function(input)
 	if input.KeyCode == Enum.KeyCode.Space then
 		JumpHeld = false
-
 		if CurrentHumanoid and CurrentHumanoid.Parent then
 			CurrentHumanoid.Jump = false
 		end
 	end
 end)
 
---// Mobile
 local function SetupMobileJump()
 	local pg = Player:WaitForChild("PlayerGui")
-
 	local touchGui = pg:WaitForChild("TouchGui", 5)
-
 	if not touchGui then return end
-
 	local frame = touchGui:WaitForChild("TouchControlFrame", 5)
-
 	if not frame then return end
-
 	local btn = frame:WaitForChild("JumpButton", 5)
-
 	if not btn then return end
-
 	btn:GetPropertyChangedSignal("GuiState"):Connect(function()
 		if btn.GuiState == Enum.GuiState.Press then
-
 			JumpHeld = true
-
 			if not Jumping then
 				DoJump()
 			end
-
 		else
-
 			JumpHeld = false
-
 			if CurrentHumanoid
 				and CurrentHumanoid.Parent then
-
 				CurrentHumanoid.Jump = false
 			end
 		end
 	end)
 end
-
 task.spawn(function()
 	if Player:FindFirstChild("PlayerGui then
 		SetupMobileJump()
@@ -385,9 +320,6 @@ task.spawn(function()
 	end
 end)
 
--- =========================================================
--- UI
--- =========================================================
 
 local Success, Library = pcall(function()
 	return loadstring(game:HttpGet(
@@ -446,10 +378,6 @@ local FilterGroup = GeneralPage:Groupbox(
 	"eye"
 )
 
--- =========================================================
--- CHARACTER
--- =========================================================
-
 local function GetCharacter()
 	local character = Player.Character
 
@@ -459,7 +387,6 @@ local function GetCharacter()
 
 	return character
 end
-
 local function GetRoot()
 	local character = GetCharacter()
 	if not character then
@@ -474,19 +401,12 @@ local function GetHumanoid()
 	if not character then
 		return nil
 	end
-
-	-- ใช้ Humanoid ตัวใหม่จากระบบ Replace ก่อน
 	if CurrentHumanoid and CurrentHumanoid.Parent == character then
 		return CurrentHumanoid
 	end
 
 	return character:FindFirstChildOfClass("Humanoid")
 end
-
--- =========================================================
--- MOVEMENT CLEANUP
--- =========================================================
-
  function CleanupTween()
 	if currentBodyVelocity then
 		pcall(function()
@@ -507,10 +427,6 @@ local function StopTween()
 	CleanupTween()
 end
 
--- =========================================================
--- TWEEN
--- =========================================================
-
 local function TweenTo(targetPosition, speedOverride)
 	if typeof(targetPosition) ~= "Vector3" then
 		return false
@@ -528,8 +444,6 @@ local function TweenTo(targetPosition, speedOverride)
 	if not root or not humanoid or humanoid.Health <= 0 then
 		return false
 	end
-
-	-- ถ้ายังไม่ได้ Replace Humanoid → ทำก่อน
 	if CurrentHumanoid == nil
 		or CurrentHumanoid.Parent ~= character then
 
@@ -553,11 +467,6 @@ local function TweenTo(targetPosition, speedOverride)
 	end
 
 	local speed = speedOverride or TweenSpeed
-
-	-- =====================================================
-	-- BODY VELOCITY
-	-- =====================================================
-
 	if currentBodyVelocity then
 		if currentBodyVelocity.Parent ~= root then
 			pcall(function()
@@ -584,10 +493,6 @@ local function TweenTo(targetPosition, speedOverride)
 
 		currentBodyVelocity = bv
 	end
-
-	-- =====================================================
-	-- TWEEN LOOP
-	-- =====================================================
 
 	local reached = false
 	local stopped = false
@@ -626,11 +531,8 @@ local function TweenTo(targetPosition, speedOverride)
 
 			return
 		end
-
-		-- Character เปลี่ยน = หยุด Tween เก่า
 		if currentRoot ~= root then
 			stopped = true
-
 			if connection then
 				connection:Disconnect()
 				connection = nil
@@ -638,28 +540,21 @@ local function TweenTo(targetPosition, speedOverride)
 
 			return
 		end
-
 		local currentPos = currentRoot.Position
 		local offset = targetPosition - currentPos
 		local distance = offset.Magnitude
-
 	if distance <= ARRIVE_DISTANCE then
 			if currentBodyVelocity
 				and currentBodyVelocity.Parent == currentRoot then
-
 				currentBodyVelocity.Velocity = Vector3.zero
 			end
-
 			reached = true
-
 			if connection then
 				connection:Disconnect()
 				connection = nil
 			end
-
 			return
 		end
-
 		if distance > 0.05 then
 			currentRoot.CFrame = CFrame.new(
 				currentPos,
@@ -670,15 +565,12 @@ local function TweenTo(targetPosition, speedOverride)
 				)
 			)
 		end
-
 		local calculatedSpeed = math.min(
 			speed,
 			math.max(, distance * 8)
 		)
-
 		if currentBodyVelocity
 			and currentBodyVelocity.Parent == currentRoot then
-
 			currentBodyVelocity.Velocity =
 				offset.Unit * calculatedSpeed
 		end
@@ -687,40 +579,27 @@ local function TweenTo(targetPosition, speedOverride)
 	while not reached
 		and not stopped
 		and AutoFarm do
-
 		local currentCharacter = GetCharacter()
-
 		if not currentCharacter then
 			break
 		end
-
 		local currentHumanoid = GetHumanoid()
-
 		if not currentHumanoid
 			or currentHumanoid.Health <= 0 then
 			break
 		end
-
 		task.wait()
 	end
-
 	if connection then
 		connection:Disconnect()
 		connection = nil
 	end
-
 	if currentBodyVelocity
 		and currentBodyVelocity.Parent == root then
-
 		currentBodyVelocity.Velocity = Vector3.zero
 	end
-
 	return reached
-end
-
--- =========================================================
--- EGG UTILITIES
--- =========================================================
+	end
 
 local function EggRecordExists(uid)
 	if not uid then
@@ -775,10 +654,6 @@ local function GetEggByUid(uid)
 
 	return nil
 end
-
--- =========================================================
--- FILTER
--- =========================================================
 
 local function IsSelected(selection, value)
 	if next(selection) == nil then
@@ -915,10 +790,6 @@ local function GetNearestFilteredEgg()
 	return nearestPart, nearestUid
 end
 
--- =========================================================
--- FILTER UI
--- =========================================================
-
 local zones, names = GetEggFilterData()
 local mutationNames = GetMutationNames()
 
@@ -995,9 +866,6 @@ FilterGroup:AddButton({
 	end,
 })
 
--- =========================================================
--- STATUS
--- =========================================================
 
 local StatusParagraph = FarmGroup:AddParagraph({
 	Title = "Egg Filter Status",
@@ -1031,16 +899,10 @@ task.spawn(function()
 		end
 	end
 end)
-
--- =========================================================
--- RECOVER TARGET
--- =========================================================
-
 local function GetCurrentTarget(uid)
 	if not uid then
 		return nil
 	end
-
 	local target = GetEggByUid(uid)
 
 	if not target then
@@ -1074,31 +936,20 @@ local function RecoverTarget(uid)
 
 	return target ~= nil
 end
-
--- =========================================================
--- EGG SESSION
--- =========================================================
-
 local function RunEggSession(uid)
 	if not uid or Lll then
 		return false
 	end
-
 	local root = GetRoot()
 	local humanoid = GetHumanoid()
-
 	if not root
 		or not humanoid
 		or humanoid.Health <= 0 then
-
 		return false
 	end
-
 	Lll = true
-
 	local sessionActive = true
 	local success = false
-
 	ActiveSession = {
 		Stop = function()
 			sessionActive = false
@@ -1109,11 +960,6 @@ local function RunEggSession(uid)
 			return uid
 		end,
 	}
-
-	-- =====================================================
-	-- STEAL LOOP
-	-- =====================================================
-
 	task.spawn(function()
 		while sessionActive do
 			if IsOwnedByMe(uid) then
@@ -1137,11 +983,6 @@ local function RunEggSession(uid)
 			task.wait(0.2)
 		end
 	end)
-
-	-- =====================================================
-	-- MOVEMENT LOOP
-	-- =====================================================
-
 	task.spawn(function()
 		local wasCarrying = false
 
@@ -1153,11 +994,8 @@ local function RunEggSession(uid)
 				targetPos = DROP_OFF_POSITION
 			else
 				if wasCarrying then
-					-- ไข่หลุดจากมือ! Tween กลับไปหยิบใหม่ทันที
 					wasCarrying = false
-
 					local egg = GetEggByUid(uid)
-
 					if egg and EggRecordExists(uid) then
 						TweenTo(egg.Position + Vector3.new(0, 2, 0))
 						task.wait(0.1)
@@ -1194,23 +1032,15 @@ local function RunEggSession(uid)
 	return success
 end
 
--- =========================================================
--- FARM ONE EGG
--- =========================================================
-
 local function FarmOneEgg()
 	if Lll then
 		return
 	end
-
 	if NeedInitialDropOff then
 		local arrived = TweenTo(DROP_OFF_POSITION)
-
 		if arrived then
 			NeedInitialDropOff = false
-
 			StopTween()
-
 			task.wait(0.3)
 		else
 			return
@@ -1240,25 +1070,17 @@ local function FarmOneEgg()
 
 	RunEggSession(uid)
 end
-
--- =========================================================
--- FARM LOOP
--- =========================================================
-
 local function StartFarmLoop()
 	if FarmThread then
 		return
 	end
-
 	FarmThread = task.spawn(function()
 		while AutoFarm do
 			local character = GetCharacter()
 			local humanoid = GetHumanoid()
-
 			if character
 				and humanoid
 				and humanoid.Health > 0 then
-
 				if notll then
 					FarmOneEgg()
 				else
@@ -1273,18 +1095,11 @@ local function StartFarmLoop()
 	end)
 end
 
--- =========================================================
--- CARRY
--- =========================================================
+
 
 EggState.CarryChanged:Connect(function(data)
 	lastCarryData = data
 end)
-
--- =========================================================
--- SPEED
--- =========================================================
-
 FarmGroup:AddSlider({
 	Title = "Tween Speed",
 	Min = 100,
@@ -1299,9 +1114,6 @@ FarmGroup:AddSlider({
 	end,
 })
 
--- =========================================================
--- AUTO FARM
--- =========================================================
 
 AutoFarmToggle = FarmGroup:AddToggle({
 	Title = "Auto Steal egg",
@@ -1331,10 +1143,6 @@ AutoFarmToggle = FarmGroup:AddToggle({
 	end,
 })
 
--- =========================================================
--- RESET ON DEATH
--- =========================================================
-
 function ResetStateOnDeath()
 	if ActiveSession then
 		ActiveSession.Stop()
@@ -1350,10 +1158,6 @@ function ResetStateOnDeath()
 		NeedInitialDropOff = true
 	end
 end
-
--- =========================================================
--- CHARACTER SETUP
--- =========================================================
 
 local function SetupCharacter(character)
 	if not character then
@@ -1377,8 +1181,6 @@ local function SetupCharacter(character)
 	if root then
 		SpawnPosition = root.Position
 	end
-
-	--// Replace Humanoid ด้วยระบบใหม่
 	task.spawn(function()
 		local humanoid = ReplaceHumanoid(character)
 
@@ -1415,11 +1217,6 @@ local function SetupCharacter(character)
 		end)
 	end
 end
-
--- =========================================================
--- CHARACTER ADDED
--- =========================================================
-
 Player.CharacterAdded:Connect(function(character)
 ResetStateOnDeath()
 
@@ -1429,13 +1226,96 @@ ResetStateOnDeath()
 
 	SetupCharacter(character)
 end)
-
--- =========================================================
--- CURRENT CHARACTER
--- =========================================================
-
 if Player.Character then
 	task.spawn(function()
 		SetupCharacter(Player.Character)
 	end)
 end
+
+
+
+
+getgenv().AntiRagdoll = false 
+
+
+
+local PlayerTab = Window:Tab("Player", "shield")
+local PlayerPage = PlayerTab:SubTab("Anti-Ragdoll")
+local PlayerGroup = Page:Groupbox("Anti-Ragdoll", "Left")
+
+local Player = Players.LocalPlayer
+
+local Remote = ReplicatedStorage:FindFirstChild("Packages")
+    and ReplicatedStorage.Packages:FindFirstChild("Networking")
+    and ReplicatedStorage.Packages.Networking:FindFirstChild("RE/RigSync/Refresh")
+
+local function AntiKnockback()
+    if not getgenv().AntiRagdoll or not Remote then return end
+    if not getconnections then return end
+
+    local s, conns = pcall(function()
+        return getconnections(Remote.OnClientEvent)
+    end)
+    if s and conns then
+        task.spawn(function()
+            for _, conn in next, conns do
+                pcall(conn.Disconnect, conn)
+            end
+        end)
+    end
+end
+
+local function Fix(Character)
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    if not Humanoid then return end
+
+    if not Humanoid.PlatformStand and Humanoid:GetState() ~= Enum.HumanoidStateType.Physics then
+        return
+    end
+
+    Humanoid.PlatformStand = false
+    Humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
+    Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+
+    for _, Object in ipairs(Character:GetDescendants()) do
+        if Object:IsA("Motor6D") then
+            Object.Enabled = true
+        elseif Object:GetAttribute("RagdollConstraint") then
+            Object:Destroy()
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if getgenv().AntiRagdoll and Player.Character then
+            Fix(Player.Character)
+        end
+    end
+end)
+
+Player.CharacterAdded:Connect(function(Character)
+    if Character:WaitForChild("Humanoid", 5) and getgenv().AntiRagdoll then
+        Fix(Character)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(10)
+        AntiKnockback()
+    end
+end)
+
+PlayerGroup:AddToggle({
+    Title = "Anti Ragdoll",
+    Default = getgenv().AntiRagdoll,
+    Flag = "AntiRagdoll",
+    Callback = function(Value)
+        getgenv().AntiRagdoll = Value
+        if Value then
+            AntiKnockback()
+        end
+    end
+})
